@@ -1,0 +1,337 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Spielbares Docker Sudoku</title>
+    <link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            margin-top: 50px;
+            background-color: #001a33;
+            background-image:
+                /* Ice cube highlights - more vivid */
+                radial-gradient(circle at 20% 30%, rgba(100,200,255,0.5) 0%, transparent 50%),
+                radial-gradient(circle at 80% 70%, rgba(0,180,255,0.4) 0%, transparent 50%),
+                radial-gradient(circle at 40% 80%, rgba(50,150,255,0.3) 0%, transparent 50%),
+                radial-gradient(circle at 70% 20%, rgba(100,220,255,0.35) 0%, transparent 50%),
+                /* Texture pattern - more vibrant */
+                repeating-linear-gradient(45deg, transparent, transparent 60px, rgba(100,220,255,0.15) 60px, rgba(100,220,255,0.15) 120px),
+                repeating-linear-gradient(-45deg, transparent, transparent 60px, rgba(0,150,255,0.12) 60px, rgba(0,150,255,0.12) 120px),
+                /* Ice cube cracks - more vivid */
+                linear-gradient(90deg, transparent 48%, rgba(100,200,255,0.25) 49%, rgba(100,200,255,0.25) 51%, transparent 52%),
+                linear-gradient(0deg, transparent 48%, rgba(100,200,255,0.25) 49%, rgba(100,200,255,0.25) 51%, transparent 52%),
+                /* Base gradient - more vivid blues */
+                linear-gradient(135deg, #001a4d 0%, #003d99 50%, #001a4d 100%);
+            background-attachment: fixed;
+            background-size: 100% 100%, 100% 100%, 100% 100%, 100% 100%, 200px 200px, 200px 200px, 120px 120px, 120px 120px, 100% 100%;
+            min-height: 100vh;
+        }
+
+        h1 {
+            font-family: 'Fredoka', sans-serif;
+            font-size: 48px;
+            font-weight: 700;
+            color: #ff6600;
+            text-shadow:
+                0 0 10px rgba(255, 100, 0, 0.8),
+                0 0 20px rgba(255, 50, 0, 0.6),
+                0 0 30px rgba(255, 0, 0, 0.4),
+                2px 2px 4px rgba(0, 0, 0, 0.5);
+            margin-bottom: 30px;
+            letter-spacing: 2px;
+        }
+        input {
+            width: 30px; height: 30px; text-align: center; font-size: 20px;
+            border: 1px solid #ccc;
+            margin: 0; padding: 0;
+            box-sizing: border-box; /* Include padding and border in the element's total width and height */
+        }
+        .grid-container {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 5px; /* Gap between 3x3 blocks */
+            border: 2px solid black;
+        }
+        .grid-block {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 0px;
+            border: 1px solid #999; /* Border for 3x3 blocks */
+        }
+        .grid-block:nth-child(3n) { border-right: 2px solid black; } /* Heavier right border for every 3rd block */
+        .grid-block:nth-child(n) { border-bottom: 2px solid black; } /* Heavier bottom border for every 3rd block */
+
+        /* Specific borders for cells to enhance 3x3 block appearance */
+        input:nth-child(3n) { border-right: 2px solid #999; }
+        input:nth-child(n+1):nth-child(-n+9) { border-top: 2px solid #999; } /* Top row of each 3x3 block */
+
+        .fixed-cell {
+            background-color: #e0e0e0;
+            font-weight: bold;
+        }
+
+        .user-set-cell {
+            color: blue;
+        }
+
+        .popup-menu {
+            position: absolute;
+            background-color: white;
+            border: 1px solid black;
+            box-shadow: 2px 2px 5px rgba(0,0,0,0.2);
+            z-index: 10;
+            display: grid;
+            grid-template-columns: repeat(3, 1fr); /* Arrange numbers in a 3x3 grid */
+            gap: 0px;
+        }
+
+        .popup-menu button {
+            display: flex; /* Use flexbox for centering */
+            justify-content: center;
+            align-items: center;
+            width: 40px;
+            height: 40px;
+            font-size: 18px;
+            border: none;
+            background: none;
+            cursor: pointer;
+            box-sizing: border-box; /* Include padding and border in the element's total width and height */
+        }
+
+        .popup-menu button:hover {
+            background-color: #f0f0f0;
+        }
+
+        .controls button {
+            margin: 10px 5px;
+            padding: 10px 20px;
+            font-size: 16px;
+            cursor: pointer;
+        }
+    </style>
+</head>
+<body>
+    <h1>Sudoku</h1>
+    <div class="grid-container" id="grid-container">
+        </div>
+    <div class="controls">
+        <button onclick="generateNewPuzzle()">Neues Spiel</button>
+        <button onclick="solvePuzzle()">Lösen</button>
+        <button onclick="resetPuzzle()">Zurücksetzen</button>
+    </div>
+
+    <script>
+        const gridContainer = document.getElementById('grid-container');
+        let initialBoardState = []; // To store the original generated puzzle for reset
+        let fixedCells = []; // Stores coordinates of cells that cannot be changed
+        let currentPopup = null; // Track the currently open popup
+
+        function createGrid() {
+            gridContainer.innerHTML = ''; // Clear existing grid
+            for (let blockRow = 0; blockRow < 3; blockRow++) {
+                for (let blockCol = 0; blockCol < 3; blockCol++) {
+                    const blockDiv = document.createElement('div');
+                    blockDiv.className = 'grid-block';
+                    for (let cellInBlock = 0; cellInBlock < 9; cellInBlock++) {
+                        const row = blockRow * 3 + Math.floor(cellInBlock / 3);
+                        const col = blockCol * 3 + (cellInBlock % 3);
+                        const input = document.createElement('input');
+                        input.type = 'number';
+                        input.min = '1';
+                        input.max = '9';
+                        input.maxLength = '1'; // Limit input to one digit
+                        input.id = `cell-${row}-${col}`;
+                        input.addEventListener('input', (e) => {
+                            if (e.target.value.length > e.target.maxLength) {
+                                e.target.value = e.target.value.slice(0, e.target.maxLength);
+                            }
+                            if (e.target.value < 1 || e.target.value > 9) {
+                                e.target.value = ''; // Clear invalid numbers
+                            }
+                            if (e.target.value && !e.target.classList.contains('fixed-cell')) {
+                                e.target.classList.add('user-set-cell');
+                            } else if (!e.target.value) {
+                                e.target.classList.remove('user-set-cell');
+                            }
+                        });
+                        input.addEventListener('click', (e) => {
+                            if (!input.classList.contains('fixed-cell')) {
+                                closePopup();
+                                showPopupMenu(row, col, input);
+                            }
+                        });
+                        blockDiv.appendChild(input);
+                    }
+                    gridContainer.appendChild(blockDiv);
+                }
+            }
+        }
+
+        function getValidNumbers(row, col) {
+            const board = getBoardFromGrid();
+            const validNumbers = new Set([1, 2, 3, 4, 5, 6, 7, 8, 9]);
+
+            // Remove numbers in the same row
+            for (let c = 0; c < 9; c++) {
+                const val = board[row][c];
+                if (val !== 0) validNumbers.delete(val);
+            }
+
+            // Remove numbers in the same column
+            for (let r = 0; r < 9; r++) {
+                const val = board[r][col];
+                if (val !== 0) validNumbers.delete(val);
+            }
+
+            // Remove numbers in the same 3x3 box
+            const boxRow = Math.floor(row / 3) * 3;
+            const boxCol = Math.floor(col / 3) * 3;
+            for (let r = boxRow; r < boxRow + 3; r++) {
+                for (let c = boxCol; c < boxCol + 3; c++) {
+                    const val = board[r][c];
+                    if (val !== 0) validNumbers.delete(val);
+                }
+            }
+
+            return Array.from(validNumbers).sort((a, b) => a - b);
+        }
+
+        function closePopup() {
+            if (currentPopup) {
+                currentPopup.remove();
+                currentPopup = null;
+            }
+        }
+
+        function showPopupMenu(row, col, input) {
+            const validNumbers = getValidNumbers(row, col);
+
+            if (validNumbers.length === 0) {
+                alert('Keine gültigen Nummern verfügbar für diese Zelle');
+                return;
+            }
+
+            const popup = document.createElement('div');
+            popup.className = 'popup-menu';
+
+            validNumbers.forEach(num => {
+                const button = document.createElement('button');
+                button.textContent = num;
+                button.addEventListener('click', () => {
+                    input.value = num;
+                    input.classList.add('user-set-cell');
+                    closePopup();
+                });
+                popup.appendChild(button);
+            });
+
+            // Add clear button (delete option)
+            const clearBtn = document.createElement('button');
+            clearBtn.textContent = '✕';
+            clearBtn.style.color = 'red';
+            clearBtn.addEventListener('click', () => {
+                input.value = '';
+                input.classList.remove('user-set-cell');
+                closePopup();
+            });
+            popup.appendChild(clearBtn);
+
+            // Position the popup near the input
+            const rect = input.getBoundingClientRect();
+            popup.style.position = 'fixed';
+            popup.style.top = (rect.bottom + 5) + 'px';
+            popup.style.left = rect.left + 'px';
+
+            document.body.appendChild(popup);
+            currentPopup = popup;
+        }
+
+        async function generateNewPuzzle() {
+            closePopup();
+            const res = await fetch('/generate');
+            const data = await res.json();
+            if (data.status === 'success') {
+                initialBoardState = JSON.parse(JSON.stringify(data.board)); // Deep copy
+                fixedCells = data.fixed_cells;
+                fillGrid(data.board);
+            } else {
+                alert(data.message);
+            }
+        }
+
+        function fillGrid(board, isSolving = false) {
+            for (let r = 0; r < 9; r++) {
+                for (let c = 0; c < 9; c++) {
+                    const cell = document.getElementById(`cell-${r}-${c}`);
+                    const value = board[r][c];
+                    const isFixed = initialBoardState[r][c] !== 0;
+
+                    cell.value = value === 0 ? '' : value;
+
+                    if (isFixed) {
+                        cell.classList.add('fixed-cell');
+                        cell.classList.remove('user-set-cell');
+                        cell.readOnly = true;
+                    } else {
+                        cell.classList.remove('fixed-cell');
+                        cell.readOnly = false;
+                        if (value !== 0) {
+                            cell.classList.add('user-set-cell');
+                        } else {
+                            cell.classList.remove('user-set-cell');
+                        }
+                    }
+                }
+            }
+        }
+
+        async function solvePuzzle() {
+            closePopup();
+            let currentBoard = getBoardFromGrid();
+            const res = await fetch('/solve', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({board: currentBoard})
+            });
+            const data = await res.json();
+            if (data.status === 'success') {
+                fillGrid(data.board); // Fill with solved board
+            } else {
+                alert(data.message);
+            }
+        }
+
+        function resetPuzzle() {
+            closePopup();
+            fillGrid(initialBoardState); // Revert to the original generated puzzle
+        }
+
+        function getBoardFromGrid() {
+            let board = [];
+            for (let r = 0; r < 9; r++) {
+                let row = [];
+                for (let c = 0; c < 9; c++) {
+                    const val = document.getElementById(`cell-${r}-${c}`).value;
+                    row.push(val ? parseInt(val) : 0);
+                }
+                board.push(row);
+            }
+            return board;
+        }
+
+        // Close popup when clicking elsewhere
+        document.addEventListener('click', (e) => {
+            if (currentPopup && !currentPopup.contains(e.target) && !e.target.classList.contains('grid-block') && e.target.tagName !== 'INPUT') {
+                closePopup();
+            }
+        });
+
+        // Initialize grid and generate a puzzle on page load
+        createGrid();
+        generateNewPuzzle();
+    </script>
+</body>
+</html>
